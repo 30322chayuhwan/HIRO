@@ -3,24 +3,33 @@ import urllib.request
 import urllib.parse
 import json
 
-# Gunicorn이 웹서버를 구동할 때 이 'app' 변수를 찾습니다!
+# 1. Gunicorn이 웹서버를 구동할 수 있도록 Flask 객체 생성
 app = Flask(__name__)
 
+# 서버가 잘 켜졌나 확인용 메인 페이지
 @app.route("/", methods=["GET", "POST"])
 def home():
-    return "네이버 뉴스 검색 전용 서버입니다."
+    return "네이버 뉴스 검색 서버가 정상 작동 중입니다!"
 
+# 2. 카카오톡과 연동되는 네이버 뉴스 검색 라우트
 @app.route("/naver-news", methods=["POST"])
 def naver_news():
     data = request.get_json(silent=True) or {}
+    
+    # 카카오 빌더 파라미터 창에서 설정한 이름 'keyword'로 검색어를 가져옵니다.
     y = data.get("action", {}).get("params", {}).get("keyword", "").strip()
 
     if not y:
-        return jsonify({"version": "2.0", "template": {"outputs": [{"simpleText": {"text": "검색어가 없습니다."}}]}})
+        return jsonify({
+            "version": "2.0",
+            "template": {"outputs": [{"simpleText": {"text": "검색할 단어가 입력되지 않았습니다."}}]}
+        })
 
+    # 🔑 발급받으신 네이버 API 키를 입력하세요.
     client_id = "tKIzERCZIsxKz_nj2b47"
     client_secret = "WNWnJAzZY8"
     
+    # 검색어 URL 인코딩 및 API 요청 주소 생성 (최신 뉴스 5개 정확도순)
     enc_text = urllib.parse.quote(y)
     url = f"https://openapi.naver.com/v1/search/news.json?query={enc_text}&display=5&sort=sim"
 
@@ -30,28 +39,39 @@ def naver_news():
 
     try:
         response = urllib.request.urlopen(req_api)
-        if response.getcode() == 200:
+        rescode = response.getcode()
+        
+        if rescode == 200:
             api_data = json.loads(response.read().decode('utf-8'))
             
             titles = []
-            # 📁 파일 저장 기능
-            with open("naver_news_result.txt", "w", encoding="utf-8") as f:
-                f.write(f"📰 '{y}' 뉴스 검색 결과\n\n")
-                for i, item in enumerate(api_data['items']):
-                    title = item['title'].replace('<b>', '').replace('</b>', '')
-                    titles.append(title)
-                    f.write(f"{i+1}. {title}\n링크: {item['link']}\n\n")
+            for item in api_data['items']:
+                # 네이버 API 특유의 <b> 태그와 따옴표 기호(&quot;)를 깔끔하게 지우기
+                title = item['title'].replace('<b>', '').replace('</b>', '').replace('&quot;', '"')
+                titles.append(title)
 
-            result_text = f"📰 ['{y}'] 검색 및 파일 저장 완료!\n\n" + "\n".join([f"- {t}" for t in titles])
+            # 검색 결과가 있을 때 카카오톡으로 보낼 문장 조립
+            if titles:
+                result_text = f"📰 네이버에서 ['{y}'] 관련 뉴스를 찾았습니다!\n\n" + "\n\n".join([f"{i+1}. {t}" for i, t in enumerate(titles)])
+            else:
+                result_text = f"['{y}']에 대한 검색 결과를 찾지 못했습니다."
         else:
-            result_text = "⚠️ 네이버 API 호출 실패"
-    except Exception as e:
-        result_text = f"오류 발생: {str(e)}"
+            result_text = f"⚠️ 네이버 API 접근 실패 (에러 코드: {rescode})"
 
+    except Exception as e:
+        result_text = f"조회 과정 중 오류가 발생했습니다: {str(e)}"
+
+    # 카카오톡 챗봇이 이해할 수 있는 JSON 포맷으로 최종 응답
     return jsonify({
         "version": "2.0",
         "template": {
-            "outputs": [{"simpleText": {"text": result_text}}]
+            "outputs": [
+                {
+                    "simpleText": {
+                        "text": result_text
+                    }
+                }
+            ]
         }
     })
 
