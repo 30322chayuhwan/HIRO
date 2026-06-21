@@ -1,54 +1,59 @@
+from flask import Flask, request, jsonify
 import urllib.request
 import urllib.parse
 import json
 
-# 🔑 발급받으신 네이버 API 키를 아래에 입력하세요.
-CLIENT_ID = "tKIzERCZIsxKz_nj2b47"
-CLIENT_SECRET = "WNWnJAzZY8"
+# Gunicorn이 웹서버를 구동할 때 이 'app' 변수를 찾습니다!
+app = Flask(__name__)
 
-def save_naver_news(query, display_count=5):
-    """네이버 뉴스 API를 호출하고 결과를 텍스트 파일로 저장하는 함수"""
-    
-    # 검색어를 URL 인코딩
-    enc_text = urllib.parse.quote(query)
-    
-    # 네이버 뉴스 검색 API URL (display: 검색 결과 개수, sort: sim은 정확도순)
-    url = f"https://openapi.naver.com/v1/search/news.json?query={enc_text}&display={display_count}&sort=sim"
+@app.route("/", methods=["GET", "POST"])
+def home():
+    return "네이버 뉴스 검색 전용 서버입니다."
 
-    request = urllib.request.Request(url)
-    request.add_header("X-Naver-Client-Id", CLIENT_ID)
-    request.add_header("X-Naver-Client-Secret", CLIENT_SECRET)
+@app.route("/naver-news", methods=["POST"])
+def naver_news():
+    data = request.get_json(silent=True) or {}
+    y = data.get("action", {}).get("params", {}).get("keyword", "").strip()
+
+    if not y:
+        return jsonify({"version": "2.0", "template": {"outputs": [{"simpleText": {"text": "검색어가 없습니다."}}]}})
+
+    client_id = "tKIzERCZIsxKz_nj2b47"
+    client_secret = "WNWnJAzZY8"
+    
+    enc_text = urllib.parse.quote(y)
+    url = f"https://openapi.naver.com/v1/search/news.json?query={enc_text}&display=5&sort=sim"
+
+    req_api = urllib.request.Request(url)
+    req_api.add_header("X-Naver-Client-Id", client_id)
+    req_api.add_header("X-Naver-Client-Secret", client_secret)
 
     try:
-        response = urllib.request.urlopen(request)
-        rescode = response.getcode()
-        
-        if rescode == 200:
-            response_body = response.read()
-            data = json.loads(response_body.decode('utf-8'))
+        response = urllib.request.urlopen(req_api)
+        if response.getcode() == 200:
+            api_data = json.loads(response.read().decode('utf-8'))
             
-            # 📁 텍스트 파일로 저장하기
+            titles = []
+            # 📁 파일 저장 기능
             with open("naver_news_result.txt", "w", encoding="utf-8") as f:
-                f.write(f"📰 '{query}' 관련 네이버 뉴스 검색 결과\n")
-                f.write("=" * 40 + "\n\n")
-                
-                for i, item in enumerate(data['items']):
-                    # 네이버 API는 검색어에 <b> 태그를 붙여서 주므로 깔끔하게 제거
-                    title = item['title'].replace('<b>', '').replace('</b>', '').replace('&quot;', '"')
-                    link = item['link']
-                    
-                    f.write(f"{i+1}. {title}\n")
-                    f.write(f"링크: {link}\n\n")
-            
-            print(f"✅ 성공! '{query}' 검색 결과가 'naver_news_result.txt' 파일에 저장되었습니다.")
-        else:
-            print(f"⚠️ API 에러 발생: 에러 코드 {rescode}")
-            
-    except Exception as e:
-        print(f"⚠️ 실행 중 오류 발생: {e}")
+                f.write(f"📰 '{y}' 뉴스 검색 결과\n\n")
+                for i, item in enumerate(api_data['items']):
+                    title = item['title'].replace('<b>', '').replace('</b>', '')
+                    titles.append(title)
+                    f.write(f"{i+1}. {title}\n링크: {item['link']}\n\n")
 
-# ==========================================
-# 테스트 실행 (원하는 검색어로 바꿔보세요)
-# ==========================================
+            result_text = f"📰 ['{y}'] 검색 및 파일 저장 완료!\n\n" + "\n".join([f"- {t}" for t in titles])
+        else:
+            result_text = "⚠️ 네이버 API 호출 실패"
+    except Exception as e:
+        result_text = f"오류 발생: {str(e)}"
+
+    return jsonify({
+        "version": "2.0",
+        "template": {
+            "outputs": [{"simpleText": {"text": result_text}}]
+        }
+    })
+
 if __name__ == "__main__":
-    save_naver_news("학교 괴담")
+    app.run(host="0.0.0.0", port=5000)
